@@ -2,7 +2,10 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#000000" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>生日快乐</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -20,7 +23,10 @@
       body {
         width: 100%;
         height: 100%;
+        height: 100dvh;
         overflow: hidden;
+        overscroll-behavior: none;
+        -webkit-tap-highlight-color: transparent;
         background: #000;
         font-family: "Times New Roman", serif;
       }
@@ -315,6 +321,83 @@
         pointer-events: none !important;
       }
 
+      /* ---------- H5 移动端 / 竖屏适配 ---------- */
+      button {
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+      }
+
+      @media (max-width: 768px) {
+        .title {
+          top: calc(env(safe-area-inset-top, 0px) + 4vh);
+          font-size: clamp(1.5rem, 8vw, 2.4rem);
+          letter-spacing: 0.02em;
+        }
+        .upload-wrapper {
+          right: calc(env(safe-area-inset-right, 0px) + 12px);
+          bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+          gap: 6px;
+        }
+        .upload-btn {
+          min-height: 44px;
+          padding: 10px 18px;
+          font-size: 13px;
+          letter-spacing: 2px;
+        }
+        .hint-text {
+          /* 移动端没有 H 键 */
+          display: none;
+        }
+        .message-box {
+          left: calc(env(safe-area-inset-left, 0px) + 10px);
+          right: calc(env(safe-area-inset-right, 0px) + 10px);
+          bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+          transform: none;
+          gap: 6px;
+        }
+        .message-box input {
+          flex: 1 1 auto;
+          min-width: 0;
+          /* 16px 可避免 iOS 聚焦输入框时页面自动放大 */
+          font-size: 16px;
+          padding: 10px 12px;
+        }
+        .msg-btn {
+          flex: 0 0 auto;
+          min-height: 40px;
+          padding: 10px 12px;
+          font-size: 13px;
+        }
+        .photo-modal-content {
+          width: calc(100vw - 32px);
+          max-width: 500px;
+          max-height: 78dvh;
+          padding: 16px;
+        }
+        .photo-grid {
+          gap: 8px;
+        }
+        .photo-close {
+          padding: 4px 10px;
+        }
+        .msg-item {
+          font-size: 14px;
+        }
+      }
+
+      /* 横屏且高度很矮（手机横放）时压缩 UI */
+      @media (max-height: 480px) and (orientation: landscape) {
+        .title {
+          top: calc(env(safe-area-inset-top, 0px) + 8px);
+          font-size: clamp(1.2rem, 5vh, 2rem);
+        }
+        .upload-btn {
+          min-height: 36px;
+          padding: 8px 14px;
+          font-size: 12px;
+        }
+      }
+
     </style>
     <link
       rel="icon"
@@ -369,6 +452,11 @@
       import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
       import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 
+      // 移动端 / 触屏设备判定（用于降低粒子数量与分辨率，保证 H5 流畅）
+      const IS_MOBILE =
+        window.matchMedia("(max-width: 768px)").matches ||
+        window.matchMedia("(pointer: coarse)").matches;
+
       // ============================================================
       // 1. 全局状态
       // ============================================================
@@ -378,8 +466,8 @@
       };
 
       const CONFIG = {
-        bodyCount: 1500,
-        dustCount: 2500,
+        bodyCount: IS_MOBILE ? 900 : 1500,
+        dustCount: IS_MOBILE ? 1400 : 2500,
         cakeBottomRadius: 12,
         cakeBottomHeight: 8,
         cakeTopRadius: 7,
@@ -403,7 +491,7 @@
         alpha: true,
       });
       renderer.setClearColor(0x000000, 0); // 透明，透出背景图
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, IS_MOBILE ? 1.6 : 2));
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.toneMapping = THREE.ReinhardToneMapping;
       renderer.toneMappingExposure = 2.2;
@@ -469,6 +557,35 @@
       );
       composer.addPass(bloomPass);
       composer.addPass(new OutputPass());
+
+      // 竖屏 / 移动端自适应：根据可视宽度反推相机距离，保证蛋糕完整入画
+      function updateCameraLayout() {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const aspect = w / h;
+        camera.aspect = aspect;
+
+        const vFov = (camera.fov * Math.PI) / 180;
+        const needWidth = 42; // 蛋糕 + 礼花所需的水平可视范围
+        const visibleWidth = 2 * Math.tan(vFov / 2) * 50 * aspect;
+        let z = 50;
+        if (visibleWidth < needWidth) {
+          z = needWidth / (2 * Math.tan(vFov / 2) * aspect);
+        }
+        z = Math.min(z, 120);
+
+        // 竖屏时相机略微抬高，让蛋糕视觉居中
+        camera.position.set(0, aspect < 1 ? 3 : 2, z);
+        camera.lookAt(0, 2, 0);
+        camera.updateProjectionMatrix();
+
+        renderer.setPixelRatio(
+          Math.min(window.devicePixelRatio, IS_MOBILE ? 1.6 : 2),
+        );
+        renderer.setSize(w, h);
+        composer.setSize(w, h);
+      }
+      updateCameraLayout();
 
       // ============================================================
       // 3. 粒子系统构建
@@ -841,7 +958,7 @@
       scene.add(bgGroup);
 
       function buildGalaxyBackground() {
-        const count = 3500;
+        const count = IS_MOBILE ? 1800 : 3500;
         const geo = new THREE.BufferGeometry();
         const pos = new Float32Array(count * 3);
         const sizes = new Float32Array(count);
@@ -887,7 +1004,7 @@
       // ============================================================
       // 五颜六色的礼花系统
       // ============================================================
-      const MAX_SPARKS = 3000; // 礼花池上限
+      const MAX_SPARKS = IS_MOBILE ? 1600 : 3000; // 礼花池上限
       let fireworkPoints = null;
       let fireworkGeo = null;
       let sparks = []; // { pos, vel, color, life, maxLife }
@@ -1254,12 +1371,11 @@
         }
       }
 
-      // 窗口缩放
-      window.addEventListener("resize", () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        composer.setSize(window.innerWidth, window.innerHeight);
+      // 窗口缩放 / 手机横竖屏切换
+      window.addEventListener("resize", updateCameraLayout);
+      window.addEventListener("orientationchange", () => {
+        // 等浏览器完成旋转后再按新尺寸布局
+        setTimeout(updateCameraLayout, 300);
       });
 
       // ============================================================
