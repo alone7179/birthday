@@ -315,29 +315,36 @@
         pointer-events: none !important;
       }
 
-      /* Webcam 画中画（左下角） */
-      #cam-container {
+      /* 背景音乐开关 */
+      #musicBtn {
         position: fixed;
-        left: 20px;
-        bottom: 20px;
-        width: 200px;
-        height: 150px;
-        z-index: 20;
-        border: 2px solid rgba(212, 175, 55, 0.6);
-        border-radius: 8px;
-        overflow: hidden;
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+        top: 20px;
+        right: 20px;
+        width: 44px;
+        height: 44px;
+        z-index: 30;
+        border-radius: 50%;
+        border: 1px solid rgba(212, 175, 55, 0.6);
+        background: rgba(0, 0, 0, 0.35);
+        color: #d4af37;
+        font-size: 20px;
+        line-height: 1;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        backdrop-filter: blur(6px);
+        transition:
+          transform 0.2s,
+          box-shadow 0.2s;
       }
-      #cam-container video,
-      #cam-container canvas {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 200px;
-        height: 150px;
-        object-fit: cover;
-        transform: scaleX(-1);
+      #musicBtn:hover {
+        transform: scale(1.1);
       }
+      #musicBtn.playing {
+        box-shadow: 0 0 14px rgba(212, 175, 55, 0.8);
+      }
+
     </style>
     <link
       rel="icon"
@@ -348,8 +355,7 @@
       {
         "imports": {
           "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
-          "@mediapipe/tasks-vision": "https://esm.sh/@mediapipe/tasks-vision@0.10.3"
+          "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
         }
       }
     </script>
@@ -361,6 +367,8 @@
     </div>
 
     <h1 class="title" id="mainTitle">Happy Birthday</h1>
+
+    <button id="musicBtn" title="背景音乐">🔈</button>
 
     <div class="upload-wrapper" id="uploadWrapper" style="display: none;">
       <button class="upload-btn" id="uploadBtn">添加照片</button>
@@ -385,11 +393,6 @@
       <button class="msg-btn" id="danmakuToggle">弹幕开</button>
     </div>
 
-    <div id="cam-container" style="display: none;">
-      <video id="webcam" autoplay playsinline></video>
-      <canvas id="camCanvas" width="160" height="120"></canvas>
-    </div>
-
     <script type="module">
       import * as THREE from "three";
       import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
@@ -397,7 +400,6 @@
       import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
       import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
       import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
-      // MediaPipe 改为动态 import，加载失败不阻塞主画面
 
       // ============================================================
       // 1. 全局状态
@@ -405,12 +407,6 @@
       const STATE = {
         mode: "TREE", // TREE | SCATTER | FOCUS
         targetMode: "TREE",
-        hand: {
-          detected: false,
-          palmX: 0.5,
-          palmY: 0.5,
-          landmarks: null,
-        },
       };
 
       const CONFIG = {
@@ -1129,86 +1125,7 @@
       }
 
       // ============================================================
-      // 5. MediaPipe 手势识别
-      // ============================================================
-      let handLandmarker = null;
-      let webcamRunning = false;
-
-      async function initHandTracking() {
-        try {
-          const { FilesetResolver, HandLandmarker } =
-            await import("@mediapipe/tasks-vision");
-          const vision = await FilesetResolver.forVisionTasks(
-            "https://unpkg.com/@mediapipe/tasks-vision@0.10.3/wasm",
-          );
-          handLandmarker = await HandLandmarker.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath:
-                "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-              delegate: "GPU",
-            },
-            runningMode: "VIDEO",
-            numHands: 1,
-          });
-
-          const video = document.getElementById("webcam");
-          const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 160, height: 120 },
-          });
-          video.srcObject = stream;
-          await video.play();
-          webcamRunning = true;
-        } catch (e) {
-          console.warn("Hand tracking unavailable:", e);
-        }
-      }
-
-      function dist(a, b) {
-        return Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
-      }
-
-      function detectGesture(lm) {
-        const thumb = lm[4],
-          index = lm[8],
-          wrist = lm[0];
-        const tips = [lm[8], lm[12], lm[16], lm[20]];
-        const pinch = dist(thumb, index);
-        const avgTipWrist =
-          tips.reduce((s, t) => s + dist(t, wrist), 0) / tips.length;
-
-        if (pinch < 0.05) return "FOCUS";
-        if (avgTipWrist < 0.25) return "TREE";
-        if (avgTipWrist > 0.4) return "SCATTER";
-        return null;
-      }
-
-      let lastVideoTime = -1;
-      function processHands() {
-        if (!handLandmarker || !webcamRunning) return;
-        const video = document.getElementById("webcam");
-        if (video.currentTime === lastVideoTime) return;
-        lastVideoTime = video.currentTime;
-
-        try {
-          const res = handLandmarker.detectForVideo(video, performance.now());
-          if (res.landmarks && res.landmarks.length > 0) {
-            const lm = res.landmarks[0];
-            STATE.hand.detected = true;
-            // 手掌中心 landmark 9 映射到旋转
-            STATE.hand.palmX = lm[9].x;
-            STATE.hand.palmY = lm[9].y;
-            const g = detectGesture(lm);
-            if (g) setMode(g);
-          } else {
-            STATE.hand.detected = false;
-          }
-        } catch (e) {
-          // 静默
-        }
-      }
-
-      // ============================================================
-      // 6. UI 事件
+      // 5. UI 事件
       // ============================================================
       // H 键隐藏 UI
       document.addEventListener("keydown", (e) => {
@@ -1385,16 +1302,9 @@
 
       function animate() {
         requestAnimationFrame(animate);
-        processHands();
 
-        // 手势映射旋转：palmX 0..1 → rotation.y ±PI, palmY 0..1 → rotation.x ±0.5
-        if (STATE.hand.detected) {
-          mainGroup.rotation.y = (STATE.hand.palmX - 0.5) * Math.PI * 2;
-          mainGroup.rotation.x = (STATE.hand.palmY - 0.5) * Math.PI;
-        } else {
-          // 无手势时缓慢自动旋转
-          mainGroup.rotation.y += 0.002;
-        }
+        // 缓慢自动旋转
+        mainGroup.rotation.y += 0.002;
 
         // 火焰闪烁跳动
         if (flameMesh) {
@@ -1466,9 +1376,170 @@
         composer.render();
       }
 
+      // ============================================================
+      // 8. 背景音乐：生日快乐（Web Audio 合成，无需外部音频文件）
+      // ============================================================
+      const musicBtn = document.getElementById("musicBtn");
+      let audioCtx = null;
+      let masterGain = null;
+      let musicTimer = null;
+      let musicOn = false;
+
+      const BPM = 96;
+      const BEAT = 60 / BPM;
+      const NOTE = {
+        G4: 392.0,
+        A4: 440.0,
+        B4: 493.88,
+        C5: 523.25,
+        D5: 587.33,
+        E5: 659.25,
+        F5: 698.46,
+        G5: 783.99,
+        F3: 174.61,
+        G3: 196.0,
+        C4: 261.63,
+      };
+
+      // 四句旋律，每句带一个低音和弦根音
+      const phrases = [
+        {
+          chord: NOTE.C4 / 2,
+          notes: [
+            ["G4", 0.5], ["G4", 0.5], ["A4", 1], ["G4", 1],
+            ["C5", 1], ["B4", 2], ["REST", 0.5],
+          ],
+        },
+        {
+          chord: NOTE.G3 / 2,
+          notes: [
+            ["G4", 0.5], ["G4", 0.5], ["A4", 1], ["G4", 1],
+            ["D5", 1], ["C5", 2], ["REST", 0.5],
+          ],
+        },
+        {
+          chord: NOTE.C4 / 2,
+          notes: [
+            ["G4", 0.5], ["G4", 0.5], ["G5", 1], ["E5", 1],
+            ["C5", 1], ["B4", 1], ["A4", 2], ["REST", 0.5],
+          ],
+        },
+        {
+          chord: NOTE.F3 / 2,
+          notes: [
+            ["F5", 0.5], ["F5", 0.5], ["E5", 1], ["C5", 1],
+            ["D5", 1], ["C5", 2], ["REST", 1],
+          ],
+        },
+      ];
+
+      function playTone(freq, when, dur, vol, type) {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type || "triangle";
+        osc.frequency.setValueAtTime(freq, when);
+        gain.gain.setValueAtTime(0.0001, when);
+        gain.gain.exponentialRampToValueAtTime(vol, when + 0.05);
+        gain.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+        osc.connect(gain);
+        gain.connect(masterGain);
+        osc.start(when);
+        osc.stop(when + dur + 0.05);
+      }
+
+      function scheduleLoop() {
+        if (!audioCtx || !musicOn) return;
+        const now = audioCtx.currentTime + 0.15;
+        let t = now;
+        let total = 0;
+
+        for (const phrase of phrases) {
+          // 低音和弦垫底
+          const chordOsc = audioCtx.createOscillator();
+          const chordGain = audioCtx.createGain();
+          chordOsc.type = "sine";
+          chordOsc.frequency.value = phrase.chord;
+          const chordDur = phrase.notes.reduce((s, n) => s + n[1], 0) * BEAT;
+          chordGain.gain.setValueAtTime(0.0001, t);
+          chordGain.gain.exponentialRampToValueAtTime(0.05, t + 0.4);
+          chordGain.gain.exponentialRampToValueAtTime(0.0001, t + chordDur);
+          chordOsc.connect(chordGain);
+          chordGain.connect(masterGain);
+          chordOsc.start(t);
+          chordOsc.stop(t + chordDur + 0.1);
+
+          for (const [name, beats] of phrase.notes) {
+            const dur = beats * BEAT;
+            if (name !== "REST") {
+              const freq = NOTE[name];
+              playTone(freq, t, dur * 0.95, 0.22, "triangle");
+              // 高一个八度的轻微泛音，让音色更亮
+              playTone(freq * 2, t, dur * 0.7, 0.04, "sine");
+            }
+            t += dur;
+            total += dur;
+          }
+        }
+
+        // 循环播放
+        musicTimer = setTimeout(scheduleLoop, total * 1000);
+      }
+
+      function startMusic() {
+        if (musicOn) return;
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        masterGain = audioCtx.createGain();
+        masterGain.gain.value = 0.55;
+        const lp = audioCtx.createBiquadFilter();
+        lp.type = "lowpass";
+        lp.frequency.value = 2800;
+        masterGain.connect(lp);
+        lp.connect(audioCtx.destination);
+        if (audioCtx.state === "suspended") audioCtx.resume();
+        musicOn = true;
+        musicBtn.textContent = "🔊";
+        musicBtn.classList.add("playing");
+        scheduleLoop();
+      }
+
+      function stopMusic() {
+        musicOn = false;
+        clearTimeout(musicTimer);
+        musicTimer = null;
+        if (audioCtx) {
+          audioCtx.close();
+          audioCtx = null;
+          masterGain = null;
+        }
+        musicBtn.textContent = "🔈";
+        musicBtn.classList.remove("playing");
+      }
+
+      musicBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (musicOn) stopMusic();
+        else startMusic();
+      });
+
+      // 浏览器要求用户手势后才能播放，首次交互自动开启
+      let musicAutoStarted = false;
+      ["pointerdown", "keydown", "touchstart"].forEach((ev) => {
+        document.addEventListener(
+          ev,
+          (e) => {
+            if (musicAutoStarted) return;
+            musicAutoStarted = true;
+            // 音乐按钮交给它自己的 click 处理，避免开了又关
+            if (e.target && e.target.closest && e.target.closest("#musicBtn"))
+              return;
+            if (!musicOn) startMusic();
+          },
+          { passive: true },
+        );
+      });
+
       // 启动
       animate();
-      initHandTracking();
 
       // 首帧渲染后立即隐藏 loader
       requestAnimationFrame(() => {
